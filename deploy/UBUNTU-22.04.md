@@ -35,19 +35,23 @@
 
 ## 上传
 
-在你自己的电脑上校验压缩包，再传到服务器。服务器上不需要 git。
+发布物是两个未压缩的 tar。应用包约 609MB，原图包约 6.9GB。若下载端把它们拆成不超过 100MB 的分卷，文件名是 `posewear-selfhost-app.tar.part-000` 这种序号，先在你自己的电脑上拼回去再校验：
 
 ```bash
+cat posewear-selfhost-app.tar.part-* > posewear-selfhost-app.tar
+cat posewear-selfhost-originals.tar.part-* > posewear-selfhost-originals.tar
 sha256sum -c SHA256SUMS
-scp posewear-selfhost-app-*.tar.gz posewear-selfhost-originals-*.tar.gz root@176.122.145.34:/tmp/
+scp posewear-selfhost-app.tar posewear-selfhost-originals.tar root@176.122.145.34:/tmp/
 ```
+
+没有分卷时，直接对这两个 tar 做 `sha256sum -c SHA256SUMS`。服务器上不需要 git。
 
 在服务器上：
 
 ```bash
 sudo mkdir -p /opt/posewear
-sudo tar -xzf /tmp/posewear-selfhost-app-*.tar.gz -C /opt/posewear --strip-components=1
-sudo tar -xzf /tmp/posewear-selfhost-originals-*.tar.gz -C /opt/posewear --strip-components=1
+sudo tar -xf /tmp/posewear-selfhost-app.tar -C /opt/posewear --strip-components=1
+sudo tar -xf /tmp/posewear-selfhost-originals.tar -C /opt/posewear --strip-components=1
 cd /opt/posewear
 sudo bash install.sh
 ```
@@ -127,7 +131,7 @@ journalctl -u posewear -n 50 --no-pager
 
 ## 原图如果没放进压缩包
 
-展示用的 WebP 已经在 `dist/` 里，图库可以浏览。原图下载按钮指向 `/o/...png`。补原图：
+展示用的 WebP 已经在应用包的 `dist/` 里，图库可以浏览。原图下载按钮指向 `/o/...png`，那 5665 个 PNG 合计约 6.9GB（7,385,004,829 字节），在原图包里。若原图包没有一起上传，用官方地址补：
 
 ```bash
 cd /opt/posewear
