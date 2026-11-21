@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -74,6 +76,21 @@ def start():
 OPENER = urllib.request.OpenerDirector()
 OPENER.add_handler(urllib.request.HTTPHandler())
 OPENER.add_handler(urllib.request.HTTPSHandler())
+
+
+def start_tls(root):
+    folder = tempfile.mkdtemp(prefix='posewear-cert-')
+    cert, key = os.path.join(folder, 'cert.pem'), os.path.join(folder, 'key.pem')
+    subprocess.check_call([
+        'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-keyout', key, '-out', cert,
+        '-days', '1', '-nodes', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    httpd = serve.make_tls_server('127.0.0.1', 0, root, cert, key)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cert)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
+    return httpd, 'https://127.0.0.1:%d' % httpd.server_address[1], opener
 
 
 def fetch(url, headers=None, method='GET', data=None):
@@ -190,26 +207,41 @@ def main():
     text = body.decode('utf-8', 'replace')
     check('DNS 指向 127.0.0.1 被拒绝', status == 403 and '内网' in text, (status, text[:180]))
 
-    # 频率：先把计数打满，再确认第 21 次是 429，且不会去连上游。
+    status, _, body = fetch(base + '/api/proxy', {**origin, 'x-target-url': 'https://api.openai.com/v1/models'})
+    text = body.decode('utf-8', 'replace')
+    check('明文不转发官方接口', status == 403 and 'HTTPS' in text, (status, text[:180]))
+
+    tls, tls_base, tls_open = start_tls(ROOT)
+    thost = tls_base.split('://', 1)[1]
+    torigin = {'Origin': tls_base, 'Host': thost}
+
+    def tfetch(path, headers):
+        req = urllib.request.Request(tls_base + path, headers=headers)
+        try:
+            with tls_open.open(req, timeout=30) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+
     serve.reset_limits()
     for _ in range(serve.MAX_API):
         serve.limited('127.0.0.1', 'api')
-    status, _, body = fetch(base + '/api/proxy', {**origin, 'x-target-url': 'https://api.openai.com/v1/models'})
+    status, body = tfetch('/api/proxy', {**torigin, 'x-target-url': 'https://api.openai.com/v1/models'})
     check('超过频率返回 429', status == 429 and '频繁'.encode() in body, (status, body[:120]))
     serve.reset_limits()
 
-    # 无密钥：代理不得自己加 Authorization。官方接口应返回与直连相同的鉴权失败。
     direct = urllib.request.Request('https://api.openai.com/v1/models', method='GET')
     try:
         with urllib.request.urlopen(direct, timeout=30) as resp:
             direct_status, direct_body = resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         direct_status, direct_body = exc.code, exc.read()
-    status, _, body = fetch(base + '/api/proxy', {**origin, 'x-target-url': 'https://api.openai.com/v1/models'})
+    status, body = tfetch('/api/proxy', {**torigin, 'x-target-url': 'https://api.openai.com/v1/models'})
     proxy_text = body.decode('utf-8', 'replace')
     check('无密钥状态与直连一致', status == direct_status and status in (401, 403), (status, direct_status, proxy_text[:160], direct_body[:160]))
     check('响应里没有本站注入的密钥字段', 'sk-' not in proxy_text and 'Authorization' not in proxy_text, proxy_text[:160])
     check('无密钥不是本站伪造的 200', status != 200, status)
+    tls.shutdown()
 
     # 绑定保护
     os.environ['POSEWEAR_PORT'] = '443'

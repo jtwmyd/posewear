@@ -6,11 +6,11 @@ set -euo pipefail
 
 SRC=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 PORT="${POSEWEAR_PORT:-80}"
-ORIGIN="${POSEWEAR_PUBLIC_ORIGIN:-http://176.122.145.34}"
+ORIGIN="${POSEWEAR_PUBLIC_ORIGIN:-https://176.122.145.34:8443}"
 PREFIX="${POSEWEAR_PREFIX:-/opt/posewear}"
 
-if [[ "$PORT" == "443" ]]; then
-  echo "拒绝：不能把本服务绑到 443。该端口已有其他程序，本脚本不会修改它。" >&2
+if [[ "$PORT" == "443" || "$PORT" == "41080" ]]; then
+  echo "拒绝：不能把本服务绑到 ${PORT}。该端口已有其他程序，本脚本不会修改它。" >&2
   exit 1
 fi
 if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
@@ -18,11 +18,11 @@ if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 case "$ORIGIN" in
-  http://*) ;;
-  *) echo "POSEWEAR_PUBLIC_ORIGIN 必须是 http:// 开头（不要用 https，443 不归本站）。" >&2; exit 1 ;;
+  http://*|https://*) ;;
+  *) echo "POSEWEAR_PUBLIC_ORIGIN 必须以 http:// 或 https:// 开头。" >&2; exit 1 ;;
 esac
-if [[ "$ORIGIN" == *":443"* ]]; then
-  echo "拒绝：公开地址不能指向 443。" >&2
+if [[ "$ORIGIN" == *":443"* || "$ORIGIN" == "https://176.122.145.34" ]]; then
+  echo "拒绝：公开地址不能使用 443。账号用 https://176.122.145.34:8443 。" >&2
   exit 1
 fi
 
@@ -42,19 +42,21 @@ fi
 if [[ "$(readlink -f "$SRC")" != "$(readlink -f "$PREFIX")" ]]; then
   mkdir -p "$PREFIX"
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete "$SRC"/ "$PREFIX"/
+    rsync -a "$SRC"/ "$PREFIX"/
   else
     cp -a "$SRC"/. "$PREFIX"/
   fi
 else
   mkdir -p "$PREFIX"
 fi
-
 if ! id posewear >/dev/null 2>&1; then
   useradd --system --home-dir "$PREFIX" --shell /usr/sbin/nologin posewear
 fi
 chown -R posewear:posewear "$PREFIX"
 chmod -R u=rwX,go=rX "$PREFIX"
+mkdir -p /var/lib/posewear/tls /var/lib/posewear/acme-webroot
+chown -R posewear:posewear /var/lib/posewear
+chmod 700 /var/lib/posewear
 
 sed -e "s|__PREFIX__|$PREFIX|g" -e "s|__PORT__|$PORT|g" -e "s|__ORIGIN__|$ORIGIN|g" \
   "$PREFIX/posewear.service.in" > /etc/systemd/system/posewear.service
@@ -62,6 +64,6 @@ systemctl daemon-reload
 systemctl enable posewear
 systemctl restart posewear
 
-echo "已启动 posewear，只监听 ${ORIGIN}（端口 ${PORT}）。"
-echo "443 未改动。查看状态：systemctl status posewear --no-pager"
+echo "已启动 posewear。图库在端口 ${PORT}，账号地址是 ${ORIGIN}。"
+echo "没有证书时 8443 不会监听，登录接口会拒绝明文。443 和 41080 未改动。"
 echo "查看日志：journalctl -u posewear -n 50 --no-pager"

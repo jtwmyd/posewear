@@ -11,9 +11,15 @@ WorkingDirectory=__PREFIX__
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=POSEWEAR_ROOT=__PREFIX__/dist
+Environment=POSEWEAR_STATE=/var/lib/posewear
+Environment=POSEWEAR_ACME_WEBROOT=/var/lib/posewear/acme-webroot
 Environment=POSEWEAR_HOST=0.0.0.0
 Environment=POSEWEAR_PORT=__PORT__
-Environment=POSEWEAR_PUBLIC_ORIGIN=__ORIGIN__
+Environment=POSEWEAR_TLS_PORT=8443
+Environment=POSEWEAR_TLS_CERT=/var/lib/posewear/tls/fullchain.pem
+Environment=POSEWEAR_TLS_KEY=/var/lib/posewear/tls/privkey.pem
+Environment=POSEWEAR_TLS_ORIGIN=https://176.122.145.34:8443
+Environment=POSEWEAR_PUBLIC_ORIGIN=https://176.122.145.34:8443
 ExecStart=/usr/bin/python3 __PREFIX__/serve.py
 Restart=on-failure
 RestartSec=2
@@ -23,6 +29,8 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadOnlyPaths=__PREFIX__
+ReadWritePaths=/var/lib/posewear
+StateDirectory=posewear
 LimitNOFILE=65535
 
 [Install]

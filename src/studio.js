@@ -1,6 +1,6 @@
 'use strict';
 (()=>{const A=window.APP;if(!A)return;const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),esc=A.esc,toast=A.toast;
-const LS=k=>{try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}},SV=(k,v)=>{try{localStorage[k]=JSON.stringify(v)}catch(e){}};
+const LS=k=>window.PW?PW.get(k):(function(){try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}})(),SV=(k,v)=>{if(window.PW)return PW.set(k,v);try{localStorage[k]=JSON.stringify(v)}catch(e){}};
 // ---------- 服务商 ----------
 const PROV={openai:{name:'OpenAI',base:'https://api.openai.com/v1',model:'gpt-image-1',models:['gpt-image-1','gpt-image-1-mini','gpt-image-2','dall-e-2']},
  gemini:{name:'Gemini',base:'https://generativelanguage.googleapis.com/v1beta',model:'gemini-2.5-flash-image',models:['gemini-2.5-flash-image','gemini-3-pro-image-preview','gemini-3.1-flash-image']},
@@ -19,7 +19,7 @@ const STYLES=[['keep','照片质感','photorealistic, matching the original phot
 const ANG_EN={'正面':'front view','斜侧':'three-quarter view','侧面':'side profile','俯拍':'high-angle shot looking down','仰拍':'low-angle shot looking up','背面':'back view','下から':'low angle'};
 const W={mode:LS('wbMode')||'tryon',persons:[],garments:[],poses:[],char:LS('wbChar')||'asia',charTxt:LS('wbCharTxt')||'',style:LS('wbStyle')||'keep',bm:LS('wbBm')||'each',pl:LS('wbPl')||'en',keepBg:LS('wbKeepBg')??true,busy:null,dirty:false,results:[],ri:0,cmp:true};
 // item: {kind:'lib',k,ai?} | {kind:'file',blob,url,name}
-const g0=LS('wbSel')||{};
+let g0=LS('wbSel')||{};
 // ---------- 工具 ----------
 const normBase=b=>(b||'').trim().replace(/\/+$/,'');
 function root(){let b=normBase(cfg.base)||PROV[cfg.prov].base;if(cfg.prov=='gemini')return/\/v1(beta|alpha)?$/.test(b)?b:b+'/v1beta';if(cfg.prov=='seedream')return b;return/\/v\d+$/.test(b)?b:b+'/v1'}
@@ -220,15 +220,27 @@ function setX(x){$('#wbCmp').style.setProperty('--x',x+'%');$('#wbRange').value=
 // ---------- IndexedDB ----------
 let dbp;const db=()=>dbp||(dbp=new Promise((r,j)=>{const q=indexedDB.open('lk-studio',1);q.onupgradeneeded=()=>q.result.createObjectStore('h',{keyPath:'t'});q.onsuccess=()=>r(q.result);q.onerror=()=>j(q.error)}));
 const tx=async(m,f)=>{const d=await db();return new Promise((r,j)=>{const t=d.transaction('h',m),s=t.objectStore('h'),q=f(s);t.oncomplete=()=>r(q&&q.result);t.onerror=()=>j(t.error)})};
-async function save(rec){try{await tx('readwrite',s=>s.put(rec));const all=await tx('readonly',s=>s.getAllKeys());if(all.length>40)await tx('readwrite',s=>{all.slice(0,all.length-40).forEach(k=>s.delete(k))})}catch(e){}}
-let hu=[];async function hist(){let L=[];try{L=(await tx('readonly',s=>s.getAll()))||[]}catch(e){}L.sort((a,b)=>b.t-a.t);hu.forEach(URL.revokeObjectURL);hu=[];
+function scrub(s){return cfg.key&&s?String(s).split(cfg.key).join(''):s}
+async function save(rec){
+  if(window.PW&&PW.user){
+    const after=(await PW.putBlob(rec.after)).id,before=rec.before?(await PW.putBlob(rec.before)).id:null;
+    await PW.api('POST','/api/me/history',{t:rec.t,prov:rec.prov,model:rec.model,prompt:scrub(rec.prompt),orig:scrub(rec.orig),neutral:!!rec.neutral,mode:rec.mode,label:rec.label,after,before});
+    rec.afterId=after;rec.beforeId=before;return}
+  try{await tx('readwrite',s=>s.put(rec));const all=await tx('readonly',s=>s.getAllKeys());if(all.length>40)await tx('readwrite',s=>{all.slice(0,all.length-40).forEach(k=>s.delete(k))})}catch(e){}}
+let hu=[];async function hist(){let L=[];
+  if(window.PW&&PW.user){try{const items=(await PW.api('GET','/api/me/history')).items||[];for(const row of items){const after=await PW.getBlob(row.after);const before=row.before?await PW.getBlob(row.before):null;L.push(Object.assign({},row,{after,before,afterId:row.after,beforeId:row.before}))}}catch(e){}}
+  else{try{L=(await tx('readonly',s=>s.getAll()))||[]}catch(e){}}
+  L.sort((a,b)=>b.t-a.t);hu.forEach(URL.revokeObjectURL);hu=[];
  $('#wbHist').innerHTML=L.length?L.map(r=>{const u=URL.createObjectURL(r.after);hu.push(u);return`<button data-t="${r.t}" title="${esc(new Date(r.t).toLocaleString('zh-CN')+(r.label?' · '+r.label:''))}"><img src="${u}" alt="历史结果"><span>${r.mode=='gen'?'生图':'试穿'} · ${esc(new Date(r.t).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}))}</span><i data-del="${r.t}" aria-label="删除">×</i></button>`}).join(''):'<p class="fine">还没有生成记录</p>';W.hist=L}
-$('#wbHist').onclick=async e=>{const d=e.target.closest('[data-del]');if(d){e.stopPropagation();const rec=(W.hist||[]).find(x=>x.t==d.dataset.del);await tx('readwrite',s=>s.delete(+d.dataset.del));await hist();if(rec)toast('已删除 1 条记录',async()=>{await tx('readwrite',s=>s.put(rec));hist()});return}const b=e.target.closest('[data-t]');if(!b)return;const r=W.hist.find(x=>x.t==b.dataset.t);if(r){W.results=[r];show(0,(PROV[r.prov]||{name:r.prov}).name+' · '+r.model+' · '+new Date(r.t).toLocaleString('zh-CN'));$('#wbStage').scrollIntoView({behavior:'smooth',block:'nearest'})}};
-$('#wbHClr').onclick=async()=>{const all=W.hist||[];if(!all.length)return toast('还没有生成记录');await tx('readwrite',s=>s.clear());await hist();toast(`已清空 ${all.length} 条记录`,async()=>{await tx('readwrite',s=>{all.forEach(r=>s.put(r))});hist()})};
+async function dropHist(rec){if(window.PW&&PW.user)await PW.api('DELETE','/api/me/history/'+encodeURIComponent(rec.t));else await tx('readwrite',s=>s.delete(rec.t))}
+async function putHist(rec){if(window.PW&&PW.user)await PW.api('POST','/api/me/history',{t:rec.t,prov:rec.prov,model:rec.model,prompt:scrub(rec.prompt),orig:scrub(rec.orig),neutral:!!rec.neutral,mode:rec.mode,label:rec.label,after:rec.afterId,before:rec.beforeId||null});else await tx('readwrite',s=>s.put(rec))}
+$('#wbHist').onclick=async e=>{const d=e.target.closest('[data-del]');if(d){e.stopPropagation();const rec=(W.hist||[]).find(x=>String(x.t)===String(d.dataset.del));await dropHist(rec||{t:+d.dataset.del});await hist();if(rec)toast('已删除 1 条记录',async()=>{await putHist(rec);hist()});return}const b=e.target.closest('[data-t]');if(!b)return;const r=W.hist.find(x=>String(x.t)===String(b.dataset.t));if(r){W.results=[r];show(0,(PROV[r.prov]||{name:r.prov}).name+' · '+r.model+' · '+new Date(r.t).toLocaleString('zh-CN'));$('#wbStage').scrollIntoView({behavior:'smooth',block:'nearest'})}};
+$('#wbHClr').onclick=async()=>{const all=W.hist||[];if(!all.length)return toast('还没有生成记录');if(window.PW&&PW.user)await PW.api('DELETE','/api/me/history');else await tx('readwrite',s=>s.clear());await hist();toast(`已清空 ${all.length} 条记录`,async()=>{for(const r of all)await putHist(r);hist()})};
 // ---------- 对外 ----------
 let inited=false;async function init(){if(inited)return;inited=true;const gk=[].concat(g0.g||[]),pk=(g0.p||[]).filter(x=>Array.isArray(x));const need=[gk.length&&'costume',gk.some(k=>k[0]=='a')&&'anime',pk.length&&'pose'].filter(Boolean);if(need.length)await Promise.all(need.map(A.load)).catch(()=>{});
  if(!W.garments.length)W.garments=gk.filter(k=>A.ITEMS[k]).slice(0,1).map(k=>({kind:'lib',k}));if(!W.poses.length)W.poses=pk.filter(x=>A.ITEMS[x[0]]).slice(0,6).map(x=>({kind:'lib',k:x[0],ai:x[1]??A.ITEMS[x[0]].ai}));hist()}
-window.WB={async show(){await init();render()},async pick(it){await init();if(it.type=='pose'){if(!W.poses.some(p=>p.k==it.k)){if(W.poses.length>=6)W.poses.shift();W.poses.push({kind:'lib',k:it.k,ai:it.ai})}toast(`已加入姿势参考（${W.poses.length} 个）`)}else if(it.type=='portrait'){await addPortrait(it)}else{W.garments=[{kind:'lib',k:it.k}];toast('已选为试穿服装')}A.setTab('studio')},_W:W,_cfg:cfg};
+function resetFromStore(){const base={prov:'openai',base:'',key:'',model:'',field:'image[]',proto:'edits',proxy:false};Object.keys(cfg).forEach(k=>delete cfg[k]);Object.assign(cfg,base,LS('wbCfg')||{});W.mode=LS('wbMode')||'tryon';W.char=LS('wbChar')||'asia';W.charTxt=LS('wbCharTxt')||'';W.style=LS('wbStyle')||'keep';W.bm=LS('wbBm')||'each';W.pl=LS('wbPl')||'en';W.keepBg=LS('wbKeepBg')??true;g0=LS('wbSel')||{};W.persons=[];W.results=[];if(inited){inited=false;init().then(()=>{render();hist()})}}
+window.WB={async show(){await init();render()},async pick(it){await init();if(it.type=='pose'){if(!W.poses.some(p=>p.k==it.k)){if(W.poses.length>=6)W.poses.shift();W.poses.push({kind:'lib',k:it.k,ai:it.ai})}toast(`已加入姿势参考（${W.poses.length} 个）`)}else if(it.type=='portrait'){await addPortrait(it)}else{W.garments=[{kind:'lib',k:it.k}];toast('已选为试穿服装')}A.setTab('studio')},resetFromStore,_W:W,_cfg:cfg};
 if(document.body.classList.contains('studio'))WB.show();
 if(location.hash=='#studio'){const t0=()=>scrollTo(0,0);requestAnimationFrame(t0);addEventListener('load',()=>setTimeout(t0,0),{once:true})}
 addEventListener('keydown',e=>{if(e.key=='Escape'){if(!$('#pk').hidden)pkClose();else if(!$('#cfg').hidden)cfgClose()}});

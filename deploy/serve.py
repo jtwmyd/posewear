@@ -25,6 +25,8 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import account
+
 # 与 functions/api/proxy.js 保持同一组白名单与路径限制。
 API_PATH = re.compile(r'^/(api/v3|v\d+(beta|alpha)?)/(images/(edits|generations)|models(/[^/]+(:generateContent)?)?)$')
 CUSTOM_PATH = re.compile(r'/(images/(edits|generations)|models(/[^/]+(:generateContent)?)?)$')
@@ -344,14 +346,22 @@ class ImageRejected(Exception):
     pass
 
 
+def _refuse_port(port, label):
+    if port in (443, 41080):
+        raise SystemExit('拒绝监听 %s（%s）：该端口不归本服务使用，程序不会绑定或修改它。' % (port, label))
+    if port < 1 or port > 65535:
+        raise SystemExit(label + ' 无效')
+
+
 def load_config():
     host = os.environ.get('POSEWEAR_HOST', '0.0.0.0')
     port = int(os.environ.get('POSEWEAR_PORT', '80'))
     root = os.environ.get('POSEWEAR_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dist'))
-    if port == 443:
-        raise SystemExit('拒绝监听 443：该端口不归本服务使用，程序不会绑定或修改它。')
-    if port < 1 or port > 65535:
-        raise SystemExit('POSEWEAR_PORT 无效')
+    _refuse_port(port, 'POSEWEAR_PORT')
+    tls_port = int(os.environ.get('POSEWEAR_TLS_PORT', '8443'))
+    _refuse_port(tls_port, 'POSEWEAR_TLS_PORT')
+    if tls_port == port:
+        raise SystemExit('POSEWEAR_TLS_PORT 不能和 POSEWEAR_PORT 相同')
     if not os.path.isdir(root):
         raise SystemExit('找不到站点目录：' + root)
     return host, port, os.path.realpath(root)
@@ -370,19 +380,72 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write('%s - %s\n' % (self.log_date_time_string(), fmt % args))
 
     def do_HEAD(self):
+        if self._guard():
+            return
         self._static(head=True)
 
     def do_GET(self):
+        if self._guard():
+            return
         if self._proxy_path():
             self._proxy('GET')
             return
         self._static(head=False)
 
     def do_POST(self):
+        if self._guard():
+            return
         if self._proxy_path():
             self._proxy('POST')
             return
         self._send_json(*error_payload(405, '只支持 GET / POST'))
+
+    def do_PUT(self):
+        if self._guard():
+            return
+        self._send_json(*error_payload(405, '只支持 GET / POST'))
+
+    def do_DELETE(self):
+        if self._guard():
+            return
+        self._send_json(*error_payload(405, '只支持 GET / POST'))
+
+    def _guard(self):
+        if self._acme():
+            return True
+        if account.wants(self):
+            account.handle(self)
+            return True
+        return False
+
+    def _acme(self):
+        path = urllib.parse.urlsplit(self.path).path
+        prefix = '/.well-known/acme-challenge/'
+        if not path.startswith(prefix):
+            return False
+        name = path[len(prefix):]
+        if not re.fullmatch(r'[A-Za-z0-9_-]{8,200}', name):
+            self._send_json(*error_payload(404, '没有这个验证文件'))
+            return True
+        webroot = os.path.realpath(os.environ.get('POSEWEAR_ACME_WEBROOT') or os.path.join(account.state_dir(), 'acme-webroot'))
+        root = os.path.realpath(os.path.join(webroot, '.well-known', 'acme-challenge'))
+        os.makedirs(root, exist_ok=True)
+        full = os.path.realpath(os.path.join(root, name))
+        if not full.startswith(root + os.sep) or not os.path.isfile(full):
+            self.send_response(404)
+            self.send_header('Content-Length', '0')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            return True
+        data = open(full, 'rb').read(65536)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        if self.command != 'HEAD':
+            self.wfile.write(data)
+        return True
 
     def do_OPTIONS(self):
         if self._proxy_path():
@@ -402,16 +465,19 @@ class Handler(BaseHTTPRequestHandler):
     def _client_ip(self):
         return self.client_address[0]
 
-    def _send_json(self, status, body):
+    def _send_json(self, status, body, extra=None):
         self.close_connection = True
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Connection', 'close')
+        for name, value in extra or []:
+            self.send_header(name, value)
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != 'HEAD':
+            self.wfile.write(body)
 
     def _proxy(self, method):
         self.close_connection = True
@@ -433,6 +499,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(*error_payload(decision[1], decision[2]))
             return
         parts = decision[1]
+        try:
+            ips = screen_host(parts.hostname)
+        except PrivateTarget:
+            self._send_json(*error_payload(403, '不能转发到内网地址'))
+            return
+        except TargetUnreachable:
+            self._send_json(*error_payload(502, '代理无法连接目标服务'))
+            return
+        if not getattr(self.server, 'secure', False):
+            self._send_json(*error_payload(403, '登录、注册、修改密码和携带密钥的请求只接受 HTTPS'))
+            return
         if limited(self._client_ip(), 'img' if kind == 'image' else 'api'):
             self._send_json(*error_payload(429, '请求过于频繁，请稍后再试'))
             return
@@ -450,14 +527,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(*error_payload(413, '请求体过大'))
                 return
             body = self.rfile.read(length) if length else b''
-        try:
-            ips = screen_host(parts.hostname)
-        except PrivateTarget:
-            self._send_json(*error_payload(403, '不能转发到内网地址'))
-            return
-        except TargetUnreachable:
-            self._send_json(*error_payload(502, '代理无法连接目标服务'))
-            return
         forwarded = []
         for name, value in self.headers.items():
             key = name.lower()
@@ -664,6 +733,7 @@ def _parse_range(header, size):
 class SiteServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    secure = False
 
     def __init__(self, addr, root):
         self.site_root = root
@@ -675,21 +745,56 @@ class SiteServer(ThreadingHTTPServer):
         super().__init__(addr, Handler)
 
 
+class TLSSiteServer(SiteServer):
+    secure = True
+
+    def __init__(self, addr, root, cert, key):
+        super().__init__(addr, root)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(cert, key)
+        self.socket = ctx.wrap_socket(self.socket, server_side=True)
+
+
 def make_server(host, port, root):
     return SiteServer((host, port), os.path.realpath(root))
+
+
+def make_tls_server(host, port, root, cert, key):
+    return TLSSiteServer((host, port), os.path.realpath(root), cert, key)
+
+
+def _tls_files():
+    cert = os.environ.get('POSEWEAR_TLS_CERT', '')
+    key = os.environ.get('POSEWEAR_TLS_KEY', '')
+    if cert and key and os.path.isfile(cert) and os.path.isfile(key):
+        return cert, key
+    return None
 
 
 def main():
     host, port, root = load_config()
     httpd = make_server(host, port, root)
+    tls = None
+    files = _tls_files()
+    tls_port = int(os.environ.get('POSEWEAR_TLS_PORT', '8443'))
+    if files:
+        tls = make_tls_server(host, tls_port, root, files[0], files[1])
+        threading.Thread(target=tls.serve_forever, name='posewear-tls', daemon=True).start()
+        print('PoseWear HTTPS %s:%s' % (host, tls_port), flush=True)
+    else:
+        print('8443 未启动：没有证书。登录和携带密钥的接口会拒绝明文请求。', flush=True)
     print('PoseWear HTTP %s:%s  根目录 %s' % (host, port, root), flush=True)
-    print('未监听 443，也不修改该端口上的现有程序。', flush=True)
+    print('未监听 443 和 41080，也不修改这两个端口上的现有程序。', flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print('\n停止', flush=True)
     finally:
         httpd.server_close()
+        if tls:
+            tls.shutdown()
+            tls.server_close()
 
 
 if __name__ == '__main__':
