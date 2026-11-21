@@ -1,6 +1,6 @@
 'use strict';
 let Q0='',QT='';try{const u=new URLSearchParams(location.search);Q0=(u.get('q')||'').slice(0,60);QT=u.get('t')||''}catch(e){}
-const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),LS=k=>{try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}},SV=(k,v)=>{try{localStorage[k]=JSON.stringify(v)}catch(e){}};
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),LS=k=>window.PW?PW.get(k):(function(){try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}})(),SV=(k,v)=>{if(window.PW)return PW.set(k,v);try{localStorage[k]=JSON.stringify(v)}catch(e){}};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const RM=matchMedia('(prefers-reduced-motion: reduce)').matches,HOVER=matchMedia('(hover:hover) and (pointer:fine)').matches;
 const ITEMS={},DATA={},LOAD={},TABS=['pose','depth','costume','anime','portrait','studio','fav','recent'],TNAME={pose:'姿势库',depth:'深度姿势',costume:'服装库',anime:'动画服装库',portrait:'人像库',studio:'试穿',fav:'我的收藏',recent:'最近浏览'};
@@ -182,7 +182,8 @@ $('#ageN').onclick=$('#ageBox').onclick=e=>{if(e.target.id!='ageN'&&e.target.id!
 document.addEventListener('click',e=>{const b=e.target.closest('[data-age]');if(!b)return;st.adult?(ageSet(false),toast('已隐藏成人内容')):ageAsk()});
 $('#privO').onclick=e=>{e.preventDefault();$('#privBox').hidden=false};$('#privBox').onclick=e=>{if(e.target.id=='privBox'||e.target.dataset.close!=null)$('#privBox').hidden=true};
 addEventListener('hashchange',()=>{const id=location.hash.split('/')[1];if(!$('#lb').hidden){if(id)return;lbPushed=false;lbClose();setTimeout(route,closing?280:0);return}route()});
-if(innerWidth<=760)$('#q').placeholder='搜索';setLang(st.lang,true);ageSet(st.adult);hdr();countUp();needKeys([...st.sel]).then(()=>tray()).catch(()=>{});st.tab='';if(Q0&&!location.hash)history.replaceState(null,'','?q='+encodeURIComponent(Q0)+'#'+(TABS.includes(QT)?QT:'costume'));route();
+function boot(){st.fav=new Set(LS('fav')||[]);st.sel=LS('sel')||[];st.rec=LS('rec')||[];st.recT=LS('recT')||{};st.ang=LS('ang')||{};st.lang=LS('lang')||'zh';st.tl=LS('tl')||'zh';st.adult=LS('adult')===true;if(innerWidth<=760)$('#q').placeholder='搜索';setLang(st.lang,true);ageSet(st.adult);hdr();countUp();needKeys([...st.sel]).then(()=>tray()).catch(()=>{});st.tab='';if(Q0&&!location.hash)history.replaceState(null,'','?q='+encodeURIComponent(Q0)+'#'+(TABS.includes(QT)?QT:'costume'));route()}
+if(window.PW)PW.ready.then(()=>{boot();window.WB&&WB.resetFromStore&&WB.resetFromStore()});else boot();
 if('serviceWorker'in navigator&&location.protocol!='file:')addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
 
-window.APP={ok,ageAsk,toggleFav,toggleSel,lbOpen,lbClose,apply,li:()=>li,load,ITEMS,DATA,thumb,big,ath,title,prompt,toast,esc,setTab,st,copy};
+window.APP={ok,ageAsk,toggleFav,toggleSel,lbOpen,lbClose,apply,li:()=>li,load,ITEMS,DATA,thumb,big,ath,title,prompt,toast,esc,setTab,st,copy,boot};

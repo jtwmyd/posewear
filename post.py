@@ -81,17 +81,20 @@ open(f'{D}/404.html','w').write(f'''<!doctype html><html lang="zh-CN"><head><met
 .nf{{max-width:480px;margin:12vh auto;text-align:center;padding:0 20px}}.nf b{{font-size:64px;color:#d81b3a;display:block;line-height:1}}</style></head><body><header><a href="/">{LOGO}衣姿 PoseWear</a></header>
 <div class="nf"><b>404</b><h1>这个页面不存在</h1><p class="mu">链接可能写错了，或者内容已经调整。</p><a class="go" href="/">回到首页</a><a class="go" style="background:#111" href="/#costume">看看服装库</a></div></body></html>''')
 _IMG=" ".join(["'self'","data:","blob:"]+list(DEPTH_ORIGINS)+([AH] if AH else []))
+# 纯 HTTP 自托管不能发 HSTS / upgrade-insecure-requests，否则浏览器会改走 443。
+_HTTP=SITE.startswith('http://')
+_UP='' if _HTTP else '; upgrade-insecure-requests'
+_HSTS='' if _HTTP else '  Strict-Transport-Security: max-age=31536000; includeSubDomains\n'
 CSP=("default-src 'self'; script-src 'self' "+SH+"; style-src 'self' 'unsafe-inline'; img-src "+_IMG+"; font-src 'self' data:; "
  "connect-src 'self' data: blob: https://api.openai.com https://generativelanguage.googleapis.com https://*.volces.com https://*.bytepluses.com https://oaidalleapiprodscus.blob.core.windows.net https://*.googleusercontent.com; "
- "worker-src 'self'; manifest-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests")
+ "worker-src 'self'; manifest-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"+_UP)
 IMM='  Cache-Control: public, max-age=31536000, immutable\n'
 open(f'{D}/_headers','w').write(f'''/*
   Content-Security-Policy: {CSP}
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
-  Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+{_HSTS}  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin
 /assets/*
 {IMM}/p/*

@@ -1,6 +1,6 @@
 // 衣姿 v8：动效与小功能
 (()=>{const A=window.APP,$=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),RM=matchMedia('(prefers-reduced-motion: reduce)').matches,EZ='cubic-bezier(.16,1,.3,1)',grid=$('#grid');
-const LS=k=>{try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}},SV=(k,v)=>{try{localStorage[k]=JSON.stringify(v)}catch(e){}};
+const LS=k=>window.PW?PW.get(k):(function(){try{return JSON.parse(localStorage[k]||'null')}catch(e){return null}})(),SV=(k,v)=>{if(window.PW)return PW.set(k,v);try{localStorage[k]=JSON.stringify(v)}catch(e){}};
 const dl=(blob,name)=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000)};
 const X=window.X={dl};
 // —— 爱心 pop + 粒子

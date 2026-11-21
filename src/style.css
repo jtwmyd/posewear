@@ -13,6 +13,10 @@ button:hover,select:hover,.btn:hover{background:var(--sf2)}button:active{transfo
 .sm{font-size:13px;padding:7px 14px}.pri{background:var(--ac);color:#fff}.pri:hover{background:var(--ac2)}
 .ghost{background:transparent;color:var(--tx2)}.ghost:hover{background:var(--sf);color:var(--tx)}
 .icon{width:40px;height:40px;padding:0;background:transparent;border-radius:50%}.icon:hover{background:var(--sf)}
+#acctBtn{padding:7px 12px;font-size:13px;max-width:9em;overflow:hidden;text-overflow:ellipsis}
+#acctBox .fld,#acctBox input{display:block;width:100%;margin:8px 0}
+#acctBox input{font:inherit;padding:10px 12px;border-radius:12px;border:1px solid var(--line2);background:var(--bg);color:var(--tx)}
+#acctWho p{margin:0 0 8px}
 .icon svg,.fbtn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .icon svg.gh{fill:currentColor;stroke:none}
 a.icon{display:inline-flex;align-items:center;justify-content:center;color:inherit;text-decoration:none}
